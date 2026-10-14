@@ -1,0 +1,66 @@
+[
+  {
+    "question": "Which vehicles are underperforming this month?",
+    "sql": "WITH v AS (SELECT t.vehicle_id, ve.plate_number, ve.make, ve.model, ve.vehicle_type, SUM(t.distance_km) AS km, SUM(t.distance_km)/SUM(t.fuel_used_l) AS kmpl, SUM(t.idle_min)/SUM(t.duration_min) AS idle_ratio FROM trips t JOIN vehicles ve ON ve.vehicle_id = t.vehicle_id WHERE t.trip_date BETWEEN '2026-09-01' AND '2026-09-30' GROUP BY t.vehicle_id HAVING km >= 300), ta AS (SELECT vehicle_type, SUM(km*1.0)/SUM(km/kmpl) AS type_kmpl FROM v GROUP BY vehicle_type) SELECT v.plate_number, v.make, v.model, v.vehicle_type, ROUND(v.kmpl,2) AS km_per_litre, ROUND(ta.type_kmpl,2) AS type_avg_km_per_litre, ROUND(v.idle_ratio*100,1) AS idle_pct FROM v JOIN ta USING (vehicle_type) WHERE v.kmpl < 0.8*ta.type_kmpl OR v.idle_ratio > 0.30 ORDER BY v.kmpl/ta.type_kmpl ASC"
+  },
+  {
+    "question": "How many active vehicles does each customer have?",
+    "sql": "SELECT c.name AS customer, COUNT(*) AS active_vehicles FROM vehicles v JOIN customers c ON c.customer_id = v.customer_id WHERE v.status = 'active' GROUP BY c.name ORDER BY active_vehicles DESC"
+  },
+  {
+    "question": "Show total distance driven per month",
+    "sql": "SELECT strftime('%Y-%m', trip_date) AS month, ROUND(SUM(distance_km),0) AS total_km FROM trips GROUP BY month ORDER BY month"
+  },
+  {
+    "question": "Who are the 10 riskiest drivers last month?",
+    "sql": "SELECT d.full_name, c.name AS customer, ROUND(SUM(t.distance_km),0) AS km, ROUND((SUM(t.harsh_brake_count)+SUM(t.harsh_accel_count)+2*SUM(t.overspeed_count))*100.0/SUM(t.distance_km),2) AS risk_score FROM trips t JOIN drivers d ON d.driver_id = t.driver_id JOIN customers c ON c.customer_id = d.customer_id WHERE t.trip_date BETWEEN '2026-08-01' AND '2026-08-31' GROUP BY t.driver_id HAVING SUM(t.distance_km) >= 500 ORDER BY risk_score DESC LIMIT 10"
+  },
+  {
+    "question": "What is the average fuel efficiency by vehicle type?",
+    "sql": "SELECT v.vehicle_type, ROUND(SUM(t.distance_km)/SUM(t.fuel_used_l),2) AS km_per_litre FROM trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id GROUP BY v.vehicle_type ORDER BY km_per_litre DESC"
+  },
+  {
+    "question": "Which vehicles are overdue for service?",
+    "sql": "WITH last AS (SELECT m.vehicle_id, m.service_date, m.odometer_km, m.next_service_due_km FROM maintenance m WHERE m.record_id = (SELECT m2.record_id FROM maintenance m2 WHERE m2.vehicle_id = m.vehicle_id ORDER BY m2.service_date DESC, m2.record_id DESC LIMIT 1)), cur AS (SELECT l.vehicle_id, l.next_service_due_km, l.odometer_km + COALESCE((SELECT SUM(t.distance_km) FROM trips t WHERE t.vehicle_id = l.vehicle_id AND t.trip_date > l.service_date),0) AS current_odometer FROM last l) SELECT v.plate_number, v.make, v.model, c.name AS customer, ROUND(cur.current_odometer,0) AS current_odometer_km, ROUND(cur.next_service_due_km,0) AS service_due_km, ROUND(cur.current_odometer - cur.next_service_due_km,0) AS km_overdue FROM cur JOIN vehicles v ON v.vehicle_id = cur.vehicle_id JOIN customers c ON c.customer_id = v.customer_id WHERE cur.current_odometer > cur.next_service_due_km ORDER BY km_overdue DESC"
+  },
+  {
+    "question": "Total maintenance cost per customer this quarter, split planned vs unplanned",
+    "sql": "SELECT c.name AS customer, ROUND(SUM(CASE WHEN m.service_type = 'scheduled' THEN m.cost_aed ELSE 0 END),0) AS planned_aed, ROUND(SUM(CASE WHEN m.service_type IN ('repair','breakdown','tyre') THEN m.cost_aed ELSE 0 END),0) AS unplanned_aed FROM maintenance m JOIN vehicles v ON v.vehicle_id = m.vehicle_id JOIN customers c ON c.customer_id = v.customer_id WHERE m.service_date BETWEEN '2026-07-01' AND '2026-09-30' GROUP BY c.name ORDER BY unplanned_aed DESC"
+  },
+  {
+    "question": "How much did each fleet spend on fuel in August?",
+    "sql": "SELECT c.name AS customer, ROUND(SUM(f.amount_aed),0) AS fuel_spend_aed FROM fuel_transactions f JOIN vehicles v ON v.vehicle_id = f.vehicle_id JOIN customers c ON c.customer_id = v.customer_id WHERE f.txn_time >= '2026-08-01' AND f.txn_time < '2026-09-01' GROUP BY c.name ORDER BY fuel_spend_aed DESC"
+  },
+  {
+    "question": "Which customers have the highest idle ratio?",
+    "sql": "SELECT c.name AS customer, ROUND(SUM(t.idle_min)*100.0/SUM(t.duration_min),1) AS idle_pct, ROUND(SUM(t.idle_min)/60.0,0) AS idle_hours FROM trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN customers c ON c.customer_id = v.customer_id GROUP BY c.name ORDER BY idle_pct DESC"
+  },
+  {
+    "question": "Estimated idle cost per customer in September",
+    "sql": "SELECT c.name AS customer, ROUND(SUM(t.idle_min)/60.0,0) AS idle_hours, ROUND(SUM(t.idle_min)/60.0*1.5*2.71,0) AS idle_cost_aed FROM trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN customers c ON c.customer_id = v.customer_id WHERE t.trip_date BETWEEN '2026-09-01' AND '2026-09-30' GROUP BY c.name ORDER BY idle_cost_aed DESC"
+  },
+  {
+    "question": "What is the utilization of each vehicle type in September?",
+    "sql": "WITH u AS (SELECT v.vehicle_id, v.vehicle_type, COUNT(DISTINCT t.trip_date) AS active_days FROM vehicles v LEFT JOIN trips t ON t.vehicle_id = v.vehicle_id AND t.trip_date BETWEEN '2026-09-01' AND '2026-09-30' WHERE v.status != 'inactive' GROUP BY v.vehicle_id) SELECT vehicle_type, ROUND(AVG(active_days*100.0/30),1) AS utilization_pct, COUNT(*) AS vehicles FROM u GROUP BY vehicle_type ORDER BY utilization_pct DESC"
+  },
+  {
+    "question": "Vehicles with no trips in the last 14 days",
+    "sql": "SELECT v.plate_number, v.make, v.model, c.name AS customer, v.status, MAX(t.trip_date) AS last_trip_date FROM vehicles v JOIN customers c ON c.customer_id = v.customer_id LEFT JOIN trips t ON t.vehicle_id = v.vehicle_id GROUP BY v.vehicle_id HAVING last_trip_date IS NULL OR last_trip_date < '2026-09-17' ORDER BY last_trip_date"
+  },
+  {
+    "question": "Compare fuel bought vs fuel used per vehicle and flag big gaps",
+    "sql": "WITH used AS (SELECT vehicle_id, SUM(fuel_used_l) AS used_l FROM trips GROUP BY vehicle_id), bought AS (SELECT vehicle_id, SUM(litres) AS bought_l FROM fuel_transactions GROUP BY vehicle_id) SELECT v.plate_number, c.name AS customer, ROUND(b.bought_l,0) AS litres_bought, ROUND(u.used_l,0) AS litres_used, ROUND((b.bought_l - u.used_l)*100.0/u.used_l,1) AS gap_pct FROM used u JOIN bought b USING (vehicle_id) JOIN vehicles v ON v.vehicle_id = u.vehicle_id JOIN customers c ON c.customer_id = v.customer_id WHERE ABS(b.bought_l - u.used_l) > 0.15*u.used_l ORDER BY gap_pct DESC"
+  },
+  {
+    "question": "Cost per km for each customer this quarter",
+    "sql": "WITH km AS (SELECT v.customer_id, SUM(t.distance_km) AS km FROM trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id GROUP BY v.customer_id), fuel AS (SELECT v.customer_id, SUM(f.amount_aed) AS fuel_aed FROM fuel_transactions f JOIN vehicles v ON v.vehicle_id = f.vehicle_id GROUP BY v.customer_id), mnt AS (SELECT v.customer_id, SUM(m.cost_aed) AS mnt_aed FROM maintenance m JOIN vehicles v ON v.vehicle_id = m.vehicle_id WHERE m.service_date BETWEEN '2026-07-01' AND '2026-09-30' GROUP BY v.customer_id) SELECT c.name AS customer, ROUND((COALESCE(fuel.fuel_aed,0)+COALESCE(mnt.mnt_aed,0))/km.km,3) AS cost_per_km_aed FROM km JOIN customers c ON c.customer_id = km.customer_id LEFT JOIN fuel ON fuel.customer_id = km.customer_id LEFT JOIN mnt ON mnt.customer_id = km.customer_id ORDER BY cost_per_km_aed DESC"
+  },
+  {
+    "question": "Top 5 vehicles by number of breakdowns",
+    "sql": "SELECT v.plate_number, v.make, v.model, v.year, c.name AS customer, COUNT(*) AS breakdowns FROM maintenance m JOIN vehicles v ON v.vehicle_id = m.vehicle_id JOIN customers c ON c.customer_id = v.customer_id WHERE m.service_type = 'breakdown' GROUP BY m.vehicle_id ORDER BY breakdowns DESC, v.year ASC LIMIT 5"
+  },
+  {
+    "question": "Overspeeding trend by week for Oasis School Transport",
+    "sql": "SELECT strftime('%Y-W%W', t.trip_date) AS week, SUM(t.overspeed_count) AS overspeed_events, ROUND(SUM(t.overspeed_count)*100.0/SUM(t.distance_km),2) AS per_100km FROM trips t JOIN vehicles v ON v.vehicle_id = t.vehicle_id JOIN customers c ON c.customer_id = v.customer_id WHERE c.name = 'Oasis School Transport' GROUP BY week ORDER BY week"
+  }
+]
